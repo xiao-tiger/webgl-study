@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebGL2 从入门到手写 Predy 渲染引擎 —— 7 课实战大本营</title>
+  <style>
+    body { margin: 0; background: #0f1117; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+    .sidebar { width: 320px; background: #161923; border-right: 1px solid #262b3d; display: flex; flex-direction: column; }
+    .brand { padding: 18px 20px; border-bottom: 1px solid #262b3d; }
+    .brand h1 { margin: 0; font-size: 16px; color: #ff642d; }
+    .brand p { margin: 6px 0 0; font-size: 12px; color: #94a3b8; line-height: 1.5; }
+    .nav { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .nav a { display: block; padding: 12px 14px; border-radius: 8px; text-decoration: none; color: #cbd5e1; background: #1e2230; border: 1px solid transparent; transition: all 0.15s; }
+    .nav a:hover, .nav a.active { border-color: #ff642d; background: #252a3a; color: #fff; }
+    .nav .title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .nav .desc { font-size: 11px; color: #94a3b8; line-height: 1.4; }
+    .main { flex: 1; display: flex; flex-direction: column; }
+    iframe { flex: 1; width: 100%; border: none; background: #11131a; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="brand">
+      <h1>🔥 WebGL2 × Predy 实战教程</h1>
+      <p>点击下方课程切换实时 Demo；在 VS Code 中打开对应 HTML 文件即可边改边练！</p>
+    </div>
+    <div class="nav" id="nav-list">
+      <a href="./01-triangle-and-rect.html" target="preview-frame" class="active">
+        <div class="title">第 1 课：双三角形拼矩形与颜色插值</div>
+        <div class="desc">01-triangle-and-rect.html · NDC 坐标系与 varying</div>
+      </a>
+      <a href="./02-canvas2d-texture.html" target="preview-frame">
+        <div class="title">第 2 课：Canvas 2D 文字/SVG 转贴图</div>
+        <div class="desc">02-canvas2d-texture.html · UV 坐标与水波滤镜</div>
+      </a>
+      <a href="./03-transform-and-camera.html" target="preview-frame">
+        <div class="title">第 3 课：3D 透视相机与 Transform</div>
+        <div class="desc">03-transform-and-camera.html · fov:35 与 4×4 矩阵</div>
+      </a>
+      <a href="./04-binary-shapes-and-alpha.html" target="preview-frame">
+        <div class="title">第 4 课：解码 Predy 二进制 bins/shapes</div>
+        <div class="desc">04-binary-shapes-and-alpha.html · drawElements 索引绘制</div>
+      </a>
+      <a href="./05-fbo-and-postprocess.html" target="preview-frame">
+        <div class="title">第 5 课：FBO 离屏渲染与预合成复用</div>
+        <div class="desc">05-fbo-and-postprocess.html · refId 子合成渲染到纹理</div>
+      </a>
+      <a href="./06-mini-predy-player.html" target="preview-frame">
+        <div class="title">🎓 第 6 课：200行手写 Mini-Predy-Player</div>
+        <div class="desc">06-mini-predy-player.html · 完整播放线上 Predy JSON</div>
+      </a>
+      <a href="./07-true-3d-camera-and-lighting.html" target="preview-frame">
+        <div class="title">🚀 第 7 课：真 3D 环绕相机与法线光照</div>
+        <div class="desc">07-true-3d-camera-and-lighting.html · lookAt + Z-Buffer</div>
+      </a>
+    </div>
+  </div>
+  <div class="main">
+    <iframe name="preview-frame" src="./01-triangle-and-rect.html"></iframe>
+  </div>
+  <script>
+    const links = document.querySelectorAll('#nav-list a');
+    links.forEach(link => {
+      link.addEventListener('click', () => {
+        links.forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

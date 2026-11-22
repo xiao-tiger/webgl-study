@@ -18,7 +18,8 @@
 | **第 3 课** | [`03-transform-and-camera.html`](./03-transform-and-camera.html) | 锚点 (`anchor`)、平移/旋转/缩放矩阵与 3D 透视相机 (`fov: 35`) | `transform` (`position/size/rotation`) & `camera` |
 | **第 4 课** | [`04-binary-shapes-and-alpha.html`](./04-binary-shapes-and-alpha.html) | 解码 Predy JSON 的 `bins` 二进制形状 (`drawElements`) 与预乘 Alpha 混合 | `shapes` + `bins[0].b64` + `blending: 0` |
 | **第 5 课** | [`05-fbo-and-postprocess.html`](./05-fbo-and-postprocess.html) | FBO 离屏帧缓冲：把子合成渲染成纹理，再做二次滤镜与遮罩 | `type: "7"` (`refId` 预合成) & `maskMode` / 后处理特效 |
-| **第 6 课** | [`06-mini-predy-player.html`](./06-mini-predy-player.html) | **终极毕业设计**：200 行代码完整驱动真实线上 Predy JSON 动效播放！ | `predy-js/player` 完整渲染主循环与贝塞尔关键帧插值 |
+| **第 6 课** | [`06-mini-predy-player.html`](./06-mini-predy-player.html) | **2.5D 毕业设计**：200 行代码完整驱动真实线上 Predy JSON 动效播放！ | `predy-js/player` 完整渲染主循环与贝塞尔关键帧插值 |
+| **第 7 课** | [`07-true-3d-camera-and-lighting.html`](./07-true-3d-camera-and-lighting.html) | **真 3D 进阶**：`lookAt` 环绕相机、视锥体透视、`DEPTH_TEST` 深度缓冲与 3D 法线光照 | 3D 相机运镜、立体 Mesh 遮挡 (`occlusion`) 与 3D 光照计算 |
 
 ---
 

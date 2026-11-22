@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>第 1 课：双三角形拼矩形与 Varying 颜色插值</title>
+  <style>
+    body { margin: 0; background: #11131a; color: #e2e8f0; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 24px; }
+    canvas { border: 1px solid #2d3748; border-radius: 8px; background: #1a1c29; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    .tip { margin-top: 12px; font-size: 13px; color: #94a3b8; max-width: 600px; line-height: 1.6; }
+    code { background: #1e293b; padding: 2px 6px; border-radius: 4px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <h3>第 1 课：手写 2 个三角形拼出渐变矩形 (对应 Predy 基础 Mesh 面片)</h3>
+  <canvas id="gl-canvas" width="640" height="400"></canvas>
+  <div class="tip">
+    💡 <b>练习建议</b>：打开源码，尝试把最底部的 <code>gl.drawArrays(gl.TRIANGLES, 0, 6)</code> 里的 <code>6</code> 改成 <code>3</code>，或者把 <code>gl.TRIANGLES</code> 改成 <code>gl.LINE_LOOP</code>，刷新看看会发生什么！
+  </div>
+
+  <script type="module">
+    import { createProgram, setAttribute } from './lib/mini-gl.js';
+
+    const canvas = document.getElementById('gl-canvas');
+    const gl = canvas.getContext('webgl2');
+
+    // 1. 顶点着色器 (Vertex Shader)：每个顶点执行 1 次
+    const vs = `
+      attribute vec2 a_pos;   // 顶点坐标 (x, y)
+      attribute vec3 a_color; // 顶点颜色 (r, g, b)
+      varying vec3 v_color;   // 传给片元着色器做平滑插值
+
+      void main() {
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+        v_color = a_color;
+      }
+    `;
+
+    // 2. 片元着色器 (Fragment Shader)：三角形内的每个像素执行 1 次
+    const fs = `
+      precision mediump float;
+      varying vec3 v_color;
+
+      void main() {
+        gl_FragColor = vec4(v_color, 1.0);
+      }
+    `;
+
+    const program = createProgram(gl, vs, fs);
+    gl.useProgram(program);
+
+    // 3. 用 2 个三角形 (6 个顶点) 拼出一个矩形
+    const positions = [
+      // 第 1 个三角形 (左上 -> 左下 -> 右上)
+      -0.6,  0.6,
+      -0.6, -0.6,
+       0.6,  0.6,
+      // 第 2 个三角形 (左下 -> 右下 -> 右上)
+      -0.6, -0.6,
+       0.6, -0.6,
+       0.6,  0.6,
+    ];
+    setAttribute(gl, program, 'a_pos', positions, 2);
+
+    // 4. 给 6 个顶点分别指定 RGB 颜色 (范围 0.0 ~ 1.0)
+    const colors = [
+      1.0, 0.39, 0.18,  // 左上：Predy 橙
+      0.2, 0.83, 0.60,  // 左下：翠绿
+      0.38, 0.65, 0.98, // 右上：天蓝
+
+      0.2, 0.83, 0.60,  // 左下：翠绿
+      0.95, 0.75, 0.20, // 右下：金黄
+      0.38, 0.65, 0.98, // 右上：天蓝
+    ];
+    setAttribute(gl, program, 'a_color', colors, 3);
+
+    // 5. 清空画布并绘制 6 个顶点！
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.1, 0.11, 0.16, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  </script>
+</body>
+</html>

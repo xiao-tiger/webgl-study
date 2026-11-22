@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>第 3 课：复刻 Predy 3D 透视相机 (fov:35, z:10) 与图层 Transform</title>
+  <style>
+    body { margin: 0; background: #11131a; color: #e2e8f0; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 24px; }
+    canvas { border: 1px solid #2d3748; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    .tip { margin-top: 12px; font-size: 13px; color: #94a3b8; max-width: 640px; line-height: 1.6; }
+    code { background: #1e293b; padding: 2px 6px; border-radius: 4px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <h3>第 3 课：直接使用 Predy JSON 的真实 3D 坐标与透视相机 (fov: 35, z: 10)</h3>
+  <canvas id="gl-canvas" width="640" height="360"></canvas>
+  <div class="tip">
+    💡 <b>为什么 Predy JSON 里的背景宽高是 <code>[11.32, 6.36]</code>？</b><br>
+    因为相机在 <code>Z = 10</code>、视角 <code>fov = 35°</code> 时，<code>Z = 0</code> 平面刚好能被拍到的总高度是 <code>2 * 10 * tan(17.5°) ≈ 6.31</code>，16:9 宽度刚好是 <code>11.21</code>！
+  </div>
+
+  <script type="module">
+    import { createProgram, setAttribute } from './lib/mini-gl.js';
+    import { mat4Perspective, mat4TRS, mat4Multiply } from './lib/mini-mat4.js';
+
+    const canvas = document.getElementById('gl-canvas');
+    const gl = canvas.getContext('webgl2');
+
+    const vs = `
+      attribute vec3 a_pos;
+      uniform mat4 u_mvp; // 相机透视 * 相机位置 * 图层自身变换
+
+      void main() {
+        gl_Position = u_mvp * vec4(a_pos, 1.0);
+      }
+    `;
+
+    const fs = `
+      precision mediump float;
+      uniform vec4 u_color; // 对应 Predy JSON renderer.startColor
+
+      void main() {
+        gl_FragColor = u_color;
+      }
+    `;
+
+    const program = createProgram(gl, vs, fs);
+    gl.useProgram(program);
+
+    // 标准 1x1 单位正方形网格 (-0.5 ~ +0.5)，任何尺寸的矩形只需通过 scale 放大即可！
+    setAttribute(gl, program, 'a_pos', [
+      -0.5,  0.5, 0,   -0.5, -0.5, 0,    0.5,  0.5, 0,
+      -0.5, -0.5, 0,    0.5, -0.5, 0,    0.5,  0.5, 0,
+    ], 3);
+
+    const uMvpLoc = gl.getUniformLocation(program, 'u_mvp');
+    const uColorLoc = gl.getUniformLocation(program, 'u_color');
+
+    // 1. 构建 Predy JSON 里的相机投影矩阵: fov=35°, near=0.1, far=100, cameraZ=10
+    const aspect = canvas.width / canvas.height;
+    const viewProjMatrix = mat4Perspective(35, aspect, 0.1, 100, 10);
+
+    // 封装一个绘制单个 Predy Item 的函数！
+    function drawPredyItem({ position, rotation, size, color }) {
+      const modelMatrix = mat4TRS(position, rotation, [size[0], size[1], 1]);
+      const mvp = mat4Multiply(viewProjMatrix, modelMatrix);
+      gl.uniformMatrix4fv(uMvpLoc, false, mvp);
+      gl.uniform4fv(uColorLoc, color);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    function render(now) {
+      const t = now * 0.001;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(0.1, 0.1, 0.12, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      // 绘制 Predy JSON 里的 item_420 ("背景")
+      drawPredyItem({
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        size: [11.3227, 6.3690],
+        color: [0.965, 0.953, 0.925, 1.0]
+      });
+
+      // 绘制 Predy JSON 里的 item_418 ("idea-line")，并让它在 3D 空间里绕 Y/Z 轴旋转！
+      drawPredyItem({
+        position: [0, 0, 0],
+        rotation: [0, Math.sin(t * 2.5) * 45, t * 30], // 真正的 3D 透视旋转！
+        size: [3.2, 0.8],
+        color: [1.0, 0.392, 0.176, 1.0]
+      });
+
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>

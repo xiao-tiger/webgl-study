@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>第 4 课：解码 Predy JSON 的二进制 bins 与 shapes (drawElements 索引绘制)</title>
+  <style>
+    body { margin: 0; background: #11131a; color: #e2e8f0; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 24px; }
+    canvas { border: 1px solid #2d3748; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    .controls { margin-top: 12px; display: flex; gap: 16px; align-items: center; font-size: 13px; }
+    .tip { margin-top: 10px; font-size: 13px; color: #94a3b8; max-width: 680px; line-height: 1.6; }
+    code { background: #1e293b; padding: 2px 6px; border-radius: 4px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <h3>第 4 课：解码 Predy JSON 里的真实二进制 <code>bins[0].b64</code> (72 个三角形扇形拼出 <code>idea-dot</code>)</h3>
+  <canvas id="gl-canvas" width="640" height="380"></canvas>
+  <div class="controls">
+    <label style="cursor:pointer;">
+      <input id="toggle-wire" type="checkbox" checked />
+      叠加显示 72 个三角形的网格线框 (看清 <code>drawElements</code> 是怎么复用圆心顶点 0 的！)
+    </label>
+  </div>
+  <div class="tip">
+    💡 <b>揭秘 Predy JSON 的 <code>shapes[0]</code></b>：<br>
+    <code>"v": [20, [0, 0, 592, "f32"]]</code> 表示从第 0 字节开始取 592 字节作为 <code>Float32Array</code>（共 74 个 2D 顶点，第 0 个点是圆心 <code>(0,0)</code>，其余是圆周上的点）；<br>
+    <code>"i": [20, [0, 592, 432, "u16"]]</code> 表示从第 592 字节开始取 432 字节作为 <code>Uint16Array</code> 索引（<code>0,1,2, 0,2,3...</code> 共 216 个索引 = 72 个三角形）！
+  </div>
+
+  <script type="module">
+    import { createProgram, setAttribute } from './lib/mini-gl.js';
+
+    // 直接拷贝自你发的线上 Predy JSON 里的 bins[0].b64！
+    const PREDY_BIN_B64 = 'data:raw;base64,AAAAAAAAAAAAAAA/AAAAAJ4G/z62fjI9XBz8PtTQsT3qRvc+7oMEPrKP8D5EHS8+ygPoPmxhWD7Xs90+AACAPvOz0T7o1ZI+fRvEPruNpD7zBLU+8wS1PruNpD59G8Q+6NWSPvOz0T4AAIA+17PdPmxhWD7KA+g+RB0vPrKP8D7ugwQ+6kb3PtTQsT1cHPw+tn4yPZ4G/z4yMQ0kAAAAP7Z+Mr2eBv8+1NCxvVwc/D7ugwS+6kb3PkQdL76yj/A+bGFYvsoD6D4AAIC+17PdPujVkr7zs9E+u42kvn0bxD7zBLW+8wS1Pn0bxL67jaQ+87PRvujVkj7Xs92+AACAPsoD6L5sYVg+so/wvkQdLz7qRve+7oMEPlwc/L7U0LE9ngb/vrZ+Mj0AAAC/MjGNJJ4G/762fjK9XBz8vtTQsb3qRve+7oMEvrKP8L5EHS++ygPovmxhWL7Xs92+AACAvvOz0b7o1ZK+fRvEvruNpL7zBLW+8wS1vruNpL59G8S+6NWSvvOz0b4AAIC+17PdvmxhWL7KA+i+RB0vvrKP8L7ugwS+6kb3vtTQsb1cHPy+tn4yvZ4G/77KydOkAAAAv7Z+Mj2eBv++1NCxPVwc/L7ugwQ+6kb3vkQdLz6yj/C+bGFYPsoD6L4AAIA+17PdvujVkj7zs9G+u42kPn0bxL7zBLU+8wS1vn0bxD67jaS+87PRPujVkr7Xs90+AACAvsoD6D5sYVi+so/wPkQdL77qRvc+7oMEvlwc/D7U0LG9ngb/PrZ+Mr0AAAA/MjENpQAAAQACAAAAAgADAAAAAwAEAAAABAAFAAAABQAGAAAABgAHAAAABwAIAAAACAAJAAAACQAKAAAACgALAAAACwAMAAAADAANAAAADQAOAAAADgAPAAAADwAQAAAAEAARAAAAEQASAAAAEgATAAAAEwAUAAAAFAAVAAAAFQAWAAAAFgAXAAAAFwAYAAAAGAAZAAAAGQAaAAAAGgAbAAAAGwAcAAAAHAAdAAAAHQAeAAAAHgAfAAAAHwAgAAAAIAAhAAAAIQAiAAAAIgAjAAAAIwAkAAAAJAAlAAAAJQAmAAAAJgAnAAAAJwAoAAAAKAApAAAAKQAqAAAAKgArAAAAKwAsAAAALAAtAAAALQAuAAAALgAvAAAALwAwAAAAMAAxAAAAMQAyAAAAMgAzAAAAMwA0AAAANAA1AAAANQA2AAAANgA3AAAANwA4AAAAOAA5AAAAOQA6AAAAOgA7AAAAOwA8AAAAPAA9AAAAPQA+AAAAPgA/AAAAPwBAAAAAQABBAAAAQQBCAAAAQgBDAAAAQwBEAAAARABFAAAARQBGAAAARgBHAAAARwBIAAAASABJAA==';
+
+    // 1. 将 Base64 解码为二进制 ArrayBuffer
+    function decodeBase64ToArrayBuffer(dataUrl) {
+      const b64 = dataUrl.split(',')[1];
+      const binStr = atob(b64);
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+      return bytes.buffer;
+    }
+
+    const rawBuffer = decodeBase64ToArrayBuffer(PREDY_BIN_B64);
+
+    // 2. 按照 shapes[0] 的描述切片：
+    // "v": [20, [0, 0, 592, "f32"]] -> 偏移 0 字节，长度 592 字节 (148 个 float32 = 74 个 2D 顶点)
+    const vertices = new Float32Array(rawBuffer, 0, 592 / 4);
+    // "i": [20, [0, 592, 432, "u16"]] -> 偏移 592 字节，长度 432 字节 (216 个 uint16 索引 = 72 个三角形)
+    const indices = new Uint16Array(rawBuffer, 592, 432 / 2);
+
+    const canvas = document.getElementById('gl-canvas');
+    const gl = canvas.getContext('webgl2');
+
+    const vs = `
+      attribute vec2 a_pos;
+      uniform vec2 u_aspect;
+      void main() {
+        gl_Position = vec4(a_pos * u_aspect, 0.0, 1.0);
+      }
+    `;
+
+    const fs = `
+      precision mediump float;
+      uniform vec4 u_color;
+      void main() {
+        gl_FragColor = u_color;
+      }
+    `;
+
+    const program = createProgram(gl, vs, fs);
+    gl.useProgram(program);
+
+    // 绑定 74 个顶点坐标 (VBO)
+    setAttribute(gl, program, 'a_pos', vertices, 2);
+
+    // 绑定 216 个三角形顶点索引 (IBO: ELEMENT_ARRAY_BUFFER)
+    const ibo = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+
+    const uAspectLoc = gl.getUniformLocation(program, 'u_aspect');
+    const uColorLoc = gl.getUniformLocation(program, 'u_color');
+    const toggleWire = document.getElementById('toggle-wire');
+
+    function render() {
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(0.965, 0.953, 0.925, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      const aspect = canvas.height / canvas.width;
+      gl.uniform2f(uAspectLoc, aspect * 1.3, 1.3);
+
+      // 1. 使用 drawElements 画出实心橙色圆点 (item_419 idea-dot)
+      gl.uniform4f(uColorLoc, 1.0, 0.392, 0.176, 1.0);
+      gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+
+      // 2. 如果勾选了网格线框，把 72 个扇形三角形的骨架画出来！
+      if (toggleWire.checked) {
+        gl.uniform4f(uColorLoc, 0.15, 0.16, 0.2, 0.65);
+        for (let i = 0; i < indices.length; i += 3) {
+          // 每个三角形占 3 个 Uint16 (每个 Uint16 是 2 字节，所以字节偏移是 i * 2)
+          gl.drawElements(gl.LINE_LOOP, 3, gl.UNSIGNED_SHORT, i * 2);
+        }
+      }
+    }
+
+    toggleWire.addEventListener('change', render);
+    render();
+  </script>
+</body>
+</html>

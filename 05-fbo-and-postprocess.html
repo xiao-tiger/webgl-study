@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>第 5 课：FBO 离屏帧缓冲 —— 预合成 (refId: comp_28) 与全局后处理滤镜</title>
+  <style>
+    body { margin: 0; background: #11131a; color: #e2e8f0; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 24px; }
+    canvas { border: 1px solid #2d3748; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    .tip { margin-top: 12px; font-size: 13px; color: #94a3b8; max-width: 680px; line-height: 1.6; }
+    code { background: #1e293b; padding: 2px 6px; border-radius: 4px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <h3>第 5 课：FBO 离屏渲染 —— 先画 1 次子合成 <code>comp_28</code>，再复用 4 次渲染 <code>tile-0 ~ tile-3</code></h3>
+  <canvas id="gl-canvas" width="640" height="380"></canvas>
+  <div class="tip">
+    💡 <b>对应 Predy 源码</b>：主合成 <code>comp_29</code> 里有 4 个 <code>type: "7"</code> 的预合成引用图层（<code>tile-0</code> ~ <code>tile-3</code>），全都指向 <code>refId: "comp_28"</code>。<br>
+    通过 <code>gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)</code>，我们可以先把子合成画到一张离屏纹理上，再切回主屏幕把它当贴图复用 4 次，各自套用不同的 3D 变换矩阵与透明度！
+  </div>
+
+  <script type="module">
+    import { createProgram, setAttribute, createTextureFromSource, createFramebufferTexture } from './lib/mini-gl.js';
+    import { mat4Perspective, mat4TRS, mat4Multiply } from './lib/mini-mat4.js';
+
+    const canvas = document.getElementById('gl-canvas');
+    const gl = canvas.getContext('webgl2');
+
+    // 第一步：创建一个 256x128 的离屏 FBO 帧缓冲，用来存放预合成 comp_28 的渲染结果
+    const precompFBO = createFramebufferTexture(gl, 256, 128);
+
+    // 用 Canvas 2D 生成子合成 comp_28 里的 capsule 图形源
+    const svgCanvas = document.createElement('canvas');
+    svgCanvas.width = 256;
+    svgCanvas.height = 128;
+    const ctx = svgCanvas.getContext('2d');
+    ctx.fillStyle = '#ff642d';
+    ctx.beginPath();
+    ctx.roundRect(12, 12, 232, 104, 52);
+    ctx.fill();
+    const capsuleTex = createTextureFromSource(gl, svgCanvas, true);
+
+    // 着色器：支持 3D MVP 变换、贴图采样与动态透明度 u_opacity
+    const vs = `
+      attribute vec3 a_pos;
+      attribute vec2 a_uv;
+      uniform mat4 u_mvp;
+      varying vec2 v_uv;
+      void main() {
+        gl_Position = u_mvp * vec4(a_pos, 1.0);
+        v_uv = a_uv;
+      }
+    `;
+    const fs = `
+      precision mediump float;
+      varying vec2 v_uv;
+      uniform sampler2D u_tex;
+      uniform float u_opacity;
+      void main() {
+        vec4 col = texture2D(u_tex, v_uv);
+        // 预乘 Alpha 下，整体透明度直接乘以 vec4
+        gl_FragColor = col * u_opacity;
+      }
+    `;
+
+    const program = createProgram(gl, vs, fs);
+    gl.useProgram(program);
+
+    // 对应 comp_28 capsule 的 size: [1.5, 0.53]
+    setAttribute(gl, program, 'a_pos', [
+      -0.75,  0.265, 0,   -0.75, -0.265, 0,    0.75,  0.265, 0,
+      -0.75, -0.265, 0,    0.75, -0.265, 0,    0.75,  0.265, 0,
+    ], 3);
+    setAttribute(gl, program, 'a_uv', [
+       0.0, 0.0,   0.0, 1.0,   1.0, 0.0,
+       0.0, 1.0,   1.0, 1.0,   1.0, 0.0,
+    ], 2);
+
+    const uMvpLoc = gl.getUniformLocation(program, 'u_mvp');
+    const uOpacityLoc = gl.getUniformLocation(program, 'u_opacity');
+
+    // Pass 1: 绑定到离屏 FBO，把子合成渲染进 precompFBO.texture
+    gl.bindFramebuffer(gl.FRAMEBUFFER, precompFBO.fbo);
+    gl.viewport(0, 0, precompFBO.width, precompFBO.height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindTexture(gl.TEXTURE_2D, capsuleTex);
+    gl.uniformMatrix4fv(uMvpLoc, false, mat4TRS([0, 0, 0], [0, 0, 0], [1.33, 3.77, 1]));
+    gl.uniform1f(uOpacityLoc, 1.0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    // 切回主屏幕 (null)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+    const viewProj = mat4Perspective(35, canvas.width / canvas.height, 0.1, 100, 10);
+
+    // Predy JSON 里真实的 4 个预合成实例 tile-0 ~ tile-3
+    const tiles = [
+      { name: 'tile-0', x: -1.45, phase: 0.0 },
+      { name: 'tile-1', x: -0.48, phase: 0.4 },
+      { name: 'tile-2', x:  0.48, phase: 0.8 },
+      { name: 'tile-3', x:  1.45, phase: 1.2 },
+    ];
+
+    function render(now) {
+      const t = now * 0.001;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(0.965, 0.953, 0.925, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      // Pass 2: 绑定刚才离屏渲染好的 FBO 纹理，在主合成里复用绘制 4 个旋转跳动的胶囊！
+      gl.bindTexture(gl.TEXTURE_2D, precompFBO.texture);
+
+      for (const tile of tiles) {
+        const wave = Math.sin(t * 3.0 - tile.phase);
+        const y = -0.2 + wave * 0.45;
+        const rotZ = 90 + wave * 20;
+        const scale = 0.85 + Math.cos(t * 3.0 - tile.phase) * 0.15;
+        const model = mat4TRS([tile.x, y, 0], [0, 0, rotZ], [scale, scale, 1]);
+        gl.uniformMatrix4fv(uMvpLoc, false, mat4Multiply(viewProj, model));
+        gl.uniform1f(uOpacityLoc, 0.75 + 0.25 * wave);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>

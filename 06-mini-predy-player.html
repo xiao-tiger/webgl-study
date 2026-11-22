@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>第 6 课 (毕业大作)：200 行原生 WebGL2 完整驱动你的线上 Predy JSON 动效</title>
+  <style>
+    body { margin: 0; background: #11131a; color: #e2e8f0; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+    canvas { border: 1px solid #2d3748; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    .toolbar { margin-top: 14px; display: flex; align-items: center; gap: 12px; width: 720px; background: #1e293b; padding: 10px 16px; border-radius: 8px; font-size: 13px; }
+    .toolbar button { background: #ff642d; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+    .toolbar input[type="range"] { flex: 1; accent-color: #ff642d; }
+    .tip { margin-top: 12px; font-size: 13px; color: #94a3b8; max-width: 720px; line-height: 1.6; }
+    code { background: #1e293b; padding: 2px 6px; border-radius: 4px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <h3>第 6 课：手写 Mini-Predy-Player —— 直接解析并播放 <code>predy-sample.json</code> ("Predy｜让灵感动起来")</h3>
+  <canvas id="gl-canvas" width="720" height="405"></canvas>
+
+  <div class="toolbar">
+    <button id="btn-play">⏸ 暂停</button>
+    <input id="time-slider" type="range" min="0" max="12" step="0.01" value="0" />
+    <span id="time-label" style="font-family: monospace; width: 95px; text-align: right;">0.00 / 12.0s</span>
+  </div>
+
+  <div class="tip">
+    🎉 <b>恭喜毕业！</b>你看这个仅 200 行代码的单文件 HTML，把我们前 5 课学到的全部串联起来了：<br>
+    1. <b>3D 透视相机</b> (<code>fov: 35, z: 10</code>) 与父子节点矩阵相乘 (<code>parentId: "item_416"</code>)；<br>
+    2. <b>二进制 <code>bins[0]</code> + <code>shapes[0]</code></b> 索引绘制橙色圆点 <code>idea-dot</code>；<br>
+    3. <b>离屏 Canvas 2D 转 WebGL2 纹理</b> 动态渲染所有 <code>type: "9"</code> 文字图层与 <code>comp_28</code> 胶囊；<br>
+    4. <b>三段式关键帧曲线解析器</b> (<code>evalScalarCurve</code> & <code>evalPath3DCurve</code>) 驱动 12 秒完整时间轴动画！
+  </div>
+
+  <script type="module">
+    import { createProgram, setAttribute, createTextureFromSource } from './lib/mini-gl.js';
+    import { mat4Perspective, mat4TRS, mat4Multiply } from './lib/mini-mat4.js';
+
+    // 1. 解析 Predy JSON 的三段式一维关键帧曲线: [[t0, v0, t1, v1...], [bezierControls...], [tStart, tSpan, val0, val1]]
+    function evalScalarCurve(curve, normT) {
+      if (!curve || !Array.isArray(curve)) return 0;
+      const [keys, , range] = curve;
+      const [ , , v0, v1] = range;
+      const t = Math.max(0, Math.min(1, normT));
+
+      let interp = keys[1];
+      for (let i = 0; i < keys.length - 2; i += 2) {
+        const tA = keys[i], vA = keys[i + 1];
+        const tB = keys[i + 2], vB = keys[i + 3];
+        if (t >= tA && t <= tB) {
+          const u = tB === tA ? 0 : (t - tA) / (tB - tA);
+          // Smoothstep 近似三次贝塞尔缓动
+          const s = u * u * (3 - 2 * u);
+          interp = vA + (vB - vA) * s;
+          break;
+        } else if (t > tB) {
+          interp = vB;
+        }
+      }
+      return v0 + interp * (v1 - v0);
+    }
+
+    // 2. 解析 Predy JSON 的四段式 3D 空间路径曲线 (如 idea-dot 的 translate)
+    function evalPath3DCurve(curve, normT) {
+      const [keys, , points] = curve;
+      const t = Math.max(0, Math.min(1, normT));
+      const numPts = points.length / 3;
+      let idxFloat = 0;
+      for (let i = 0; i < keys.length - 2; i += 2) {
+        const tA = keys[i], kA = keys[i + 1];
+        const tB = keys[i + 2], kB = keys[i + 3];
+        if (t >= tA && t <= tB) {
+          const u = tB === tA ? 0 : (t - tA) / (tB - tA);
+          const s = u * u * (3 - 2 * u);
+          idxFloat = (kA + (kB - kA) * s) * (numPts - 1);
+          break;
+        } else if (t > tB) {
+          idxFloat = kB * (numPts - 1);
+        }
+      }
+      const i0 = Math.min(numPts - 1, Math.floor(idxFloat));
+      const i1 = Math.min(numPts - 1, i0 + 1);
+      const frac = idxFloat - i0;
+      return [
+        points[i0 * 3 + 0] * (1 - frac) + points[i1 * 3 + 0] * frac,
+        points[i0 * 3 + 1] * (1 - frac) + points[i1 * 3 + 1] * frac,
+        points[i0 * 3 + 2] * (1 - frac) + points[i1 * 3 + 2] * frac,
+      ];
+    }
+
+    // 3. 用离屏 Canvas 2D 把 Predy 的 type:"9" 文字节点画成 WebGL 纹理并计算世界宽高
+    function buildTextResource(gl, item, fontDef) {
+      const textInfo = item.text;
+      const fontSize = textInfo.s || 72;
+      const fontWeight = textInfo.wt || fontDef?.weight || 600;
+      const fontFamily = fontDef?.family || 'sans-serif';
+      const rgba = textInfo.c?.[1] || [39, 41, 37, 255];
+
+      const c = document.createElement('canvas');
+      const ctx = c.getContext('2d');
+      ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}", sans-serif`;
+      const metrics = ctx.measureText(textInfo.t);
+      const pad = 24;
+      c.width = Math.ceil(metrics.width + pad * 2);
+      c.height = Math.ceil(fontSize * 1.4 + pad * 2);
+
+      ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}", sans-serif`;
+      ctx.fillStyle = `rgba(${rgba[0]}, ${rgba[1]}, ${rgba[2]}, ${rgba[3] / 255})`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(textInfo.t, c.width / 2, c.height / 2);
+
+      const texture = createTextureFromSource(gl, c, true);
+      // 换算成 3D 世界尺寸 (Predy 中 120px 约等于 1 个世界单位 * item.size)
+      const baseScale = item.transform.size?.[0] || 0.5;
+      const worldW = (c.width / 115) * baseScale;
+      const worldH = (c.height / 115) * baseScale;
+      return { texture, worldW, worldH };
+    }
+
+    // 4. 用离屏 Canvas 2D 把 comp_28 的 SVG 圆角胶囊画成 WebGL 纹理
+    function buildCapsuleResource(gl) {
+      const c = document.createElement('canvas');
+      c.width = 360;
+      c.height = 128;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = 'rgb(255, 100, 45)';
+      ctx.beginPath();
+      ctx.roundRect(0, 0, 360, 128, 64);
+      ctx.fill();
+      return {
+        texture: createTextureFromSource(gl, c, true),
+        worldW: 1.5,
+        worldH: 0.53,
+      };
+    }
+
+    // 5. 计算任意 Item 在当前时间 t (秒) 的局部变换矩阵与透明度
+    function computeItemState(item, globalTime) {
+      const delay = item.delay || 0;
+      const duration = item.duration || 12;
+      const localTime = globalTime - delay;
+      if (localTime < 0 || (localTime > duration && item.endBehavior !== 4)) {
+        return { visible: false };
+      }
+      const normT = Math.max(0, Math.min(1, localTime / duration));
+      const tr = item.transform || {};
+
+      let [px, py, pz] = tr.position || [0, 0, 0];
+      if (tr.separateTranslate) {
+        if (tr.translateX) px += evalScalarCurve(tr.translateX, normT);
+        if (tr.translateY) py += evalScalarCurve(tr.translateY, normT);
+        if (tr.translateZ) pz += evalScalarCurve(tr.translateZ, normT);
+      } else if (tr.translate) {
+        const [dx, dy, dz] = evalPath3DCurve(tr.translate, normT);
+        px += dx; py += dy; pz += dz;
+      }
+
+      let [rx, ry, rz] = tr.rotation || [0, 0, 0];
+      if (tr.separateRotate) {
+        if (tr.rotateX) rx += evalScalarCurve(tr.rotateX, normT);
+        if (tr.rotateY) ry += evalScalarCurve(tr.rotateY, normT);
+        if (tr.rotateZ) rz += evalScalarCurve(tr.rotateZ, normT);
+      }
+
+      let sx = 1, sy = 1, sz = 1;
+      if (tr.separateScale) {
+        if (tr.scaleX) sx *= evalScalarCurve(tr.scaleX, normT);
+        if (tr.scaleY) sy *= evalScalarCurve(tr.scaleY, normT);
+      } else if (tr.scale) {
+        const s = evalScalarCurve(tr.scale, normT);
+        sx *= s; sy *= s;
+      }
+
+      let opacity = tr.opacity ?? 1;
+      if (tr.opacityChange) {
+        opacity *= evalScalarCurve(tr.opacityChange, normT);
+      }
+
+      return {
+        visible: opacity > 0.001,
+        position: [px, py, pz],
+        rotation: [rx, ry, rz],
+        scale: [sx, sy, sz],
+        opacity,
+      };
+    }
+
+    async function main() {
+      const res = await fetch('./predy-sample.json');
+      const predyData = await res.json();
+      const mainComp = predyData.compositions.find(c => c.id === predyData.compositionId);
+
+      const canvas = document.getElementById('gl-canvas');
+      const gl = canvas.getContext('webgl2');
+
+      // 通用着色器：同时支持纯色 Mesh (u_useTex=0) 和贴图 Mesh (u_useTex=1)
+      const vs = `
+        attribute vec3 a_pos;
+        attribute vec2 a_uv;
+        uniform mat4 u_mvp;
+        varying vec2 v_uv;
+        void main() {
+          gl_Position = u_mvp * vec4(a_pos, 1.0);
+          v_uv = vec2(a_uv.x, 1.0 - a_uv.y);
+        }
+      `;
+      const fs = `
+        precision mediump float;
+        varying vec2 v_uv;
+        uniform int u_useTex;
+        uniform sampler2D u_tex;
+        uniform vec4 u_color;
+        uniform float u_opacity;
+        void main() {
+          vec4 base = (u_useTex == 1) ? texture2D(u_tex, v_uv) : vec4(u_color.rgb * u_color.a, u_color.a);
+          gl_FragColor = base * u_opacity;
+        }
+      `;
+
+      const program = createProgram(gl, vs, fs);
+      gl.useProgram(program);
+
+      // 创建 VAO 1: 标准 1x1 矩形 Quad
+      const quadVAO = gl.createVertexArray();
+      gl.bindVertexArray(quadVAO);
+      setAttribute(gl, program, 'a_pos', [
+        -0.5,  0.5, 0,   -0.5, -0.5, 0,    0.5,  0.5, 0,
+        -0.5, -0.5, 0,    0.5, -0.5, 0,    0.5,  0.5, 0,
+      ], 3);
+      setAttribute(gl, program, 'a_uv', [
+         0.0,  1.0,       0.0,  0.0,       1.0,  1.0,
+         0.0,  0.0,       1.0,  0.0,       1.0,  1.0,
+      ], 2);
+
+      // 创建 VAO 2: 解码 bins[0].b64 二进制圆点 (shapes[0])
+      const shapeVAO = gl.createVertexArray();
+      gl.bindVertexArray(shapeVAO);
+      const b64 = predyData.bins[0].b64.split(',')[1];
+      const binStr = atob(b64);
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+      const shapeVerts = new Float32Array(bytes.buffer, 0, 592 / 4);
+      const shapeIndices = new Uint16Array(bytes.buffer, 592, 432 / 2);
+      setAttribute(gl, program, 'a_pos', shapeVerts, 2);
+      const ibo = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, shapeIndices, gl.STATIC_DRAW);
+
+      // 预构建文字与 SVG 胶囊贴图资源
+      const textResources = new Map();
+      for (const item of mainComp.items) {
+        if (item.type === '9' && item.text) {
+          textResources.set(item.id, buildTextResource(gl, item, predyData.fonts[item.text.f]));
+        }
+      }
+      const capsuleRes = buildCapsuleResource(gl);
+      const itemMap = new Map(mainComp.items.map(it => [it.id, it]));
+
+      const uMvpLoc = gl.getUniformLocation(program, 'u_mvp');
+      const uUseTexLoc = gl.getUniformLocation(program, 'u_useTex');
+      const uColorLoc = gl.getUniformLocation(program, 'u_color');
+      const uOpacityLoc = gl.getUniformLocation(program, 'u_opacity');
+
+      const cam = mainComp.camera;
+      const viewProj = mat4Perspective(cam.fov, canvas.width / canvas.height, cam.near, cam.far, cam.position[2]);
+
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+      let playing = true;
+      let currentTime = 0;
+      let lastNow = performance.now();
+      const slider = document.getElementById('time-slider');
+      const label = document.getElementById('time-label');
+      const btnPlay = document.getElementById('btn-play');
+
+      btnPlay.addEventListener('click', () => {
+        playing = !playing;
+        btnPlay.textContent = playing ? '⏸ 暂停' : '▶ 播放';
+      });
+      slider.addEventListener('input', e => {
+        currentTime = Number(e.target.value);
+      });
+
+      function render(now) {
+        const dt = (now - lastNow) * 0.001;
+        lastNow = now;
+        if (playing) {
+          currentTime = (currentTime + dt) % mainComp.duration;
+          slider.value = currentTime.toFixed(2);
+        }
+        label.textContent = `${currentTime.toFixed(2)} / ${mainComp.duration}.0s`;
+
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.965, 0.953, 0.925, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        for (const item of mainComp.items) {
+          if (item.type === '3') continue; // 空节点只做父级矩阵，自身不绘制
+          const st = computeItemState(item, currentTime);
+          if (!st.visible) continue;
+
+          // 如果有 parentId (例如 rhythm-first 挂载在 rhythm-copy 下)，先算父节点矩阵！
+          let parentMat = null;
+          if (item.parentId && itemMap.has(item.parentId)) {
+            const pSt = computeItemState(itemMap.get(item.parentId), currentTime);
+            if (!pSt.visible) continue;
+            parentMat = mat4TRS(pSt.position, pSt.rotation, pSt.scale);
+          }
+
+          if (item.type === '1') {
+            // Sprite 图层 (背景、idea-dot、idea-line)
+            const [w, h] = item.transform.size || [1, 1];
+            let localMat = mat4TRS(st.position, st.rotation, [st.scale[0] * w, st.scale[1] * h, 1]);
+            if (parentMat) localMat = mat4Multiply(parentMat, localMat);
+
+            gl.uniformMatrix4fv(uMvpLoc, false, mat4Multiply(viewProj, localMat));
+            gl.uniform1i(uUseTexLoc, 0);
+            gl.uniform4fv(uColorLoc, item.renderer.startColor || [1, 1, 1, 1]);
+            gl.uniform1f(uOpacityLoc, st.opacity);
+
+            if (item.renderer.shape === 0) {
+              gl.bindVertexArray(shapeVAO);
+              gl.drawElements(gl.TRIANGLES, shapeIndices.length, gl.UNSIGNED_SHORT, 0);
+            } else {
+              gl.bindVertexArray(quadVAO);
+              gl.drawArrays(gl.TRIANGLES, 0, 6);
+            }
+          } else if (item.type === '9') {
+            // 文字图层
+            const res = textResources.get(item.id);
+            let localMat = mat4TRS(st.position, st.rotation, [st.scale[0] * res.worldW, st.scale[1] * res.worldH, 1]);
+            if (parentMat) localMat = mat4Multiply(parentMat, localMat);
+
+            gl.bindVertexArray(quadVAO);
+            gl.bindTexture(gl.TEXTURE_2D, res.texture);
+            gl.uniformMatrix4fv(uMvpLoc, false, mat4Multiply(viewProj, localMat));
+            gl.uniform1i(uUseTexLoc, 1);
+            gl.uniform1f(uOpacityLoc, st.opacity);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+          } else if (item.type === '7') {
+            // 预合成引用图层 (tile-0 ~ tile-3 -> comp_28 capsule)
+            let localMat = mat4TRS(st.position, st.rotation, [st.scale[0] * capsuleRes.worldW, st.scale[1] * capsuleRes.worldH, 1]);
+            if (parentMat) localMat = mat4Multiply(parentMat, localMat);
+
+            gl.bindVertexArray(quadVAO);
+            gl.bindTexture(gl.TEXTURE_2D, capsuleRes.texture);
+            gl.uniformMatrix4fv(uMvpLoc, false, mat4Multiply(viewProj, localMat));
+            gl.uniform1i(uUseTexLoc, 1);
+            gl.uniform1f(uOpacityLoc, st.opacity);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+          }
+        }
+
+        requestAnimationFrame(render);
+      }
+      requestAnimationFrame(render);
+    }
+    main();
+  </script>
+</body>
+</html>

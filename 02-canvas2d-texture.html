@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>第 2 课：Canvas 2D 文字/SVG 转 WebGL 贴图与 Shader 特效</title>
+  <style>
+    body { margin: 0; background: #11131a; color: #e2e8f0; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 24px; }
+    canvas { border: 1px solid #2d3748; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+    .tip { margin-top: 12px; font-size: 13px; color: #94a3b8; max-width: 640px; line-height: 1.6; }
+    code { background: #1e293b; padding: 2px 6px; border-radius: 4px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <h3>第 2 课：复刻 Predy 胶囊与文字图层 (Canvas 2D 转 WebGL2 纹理 + 水波滤镜)</h3>
+  <canvas id="gl-canvas" width="640" height="400"></canvas>
+  <div class="tip">
+    💡 <b>对应 Predy 源码</b>：这就是 <code>type: "9"</code> (文字图层) 和 <code>type: "svg"</code> (胶囊图形) 的真实实现原理——先用离屏 Canvas 2D 绘制，再通过 <code>gl.texImage2D</code> 转为 WebGL2 贴图！
+  </div>
+
+  <script type="module">
+    import { createProgram, setAttribute, createTextureFromSource } from './lib/mini-gl.js';
+
+    // 第一步：用你最熟悉的 Canvas 2D 在离屏画布上画出 Predy 的圆角胶囊和文字
+    function createPredyCapsuleCanvas(text) {
+      const c = document.createElement('canvas');
+      c.width = 512;
+      c.height = 160;
+      const ctx = c.getContext('2d');
+
+      // 对应 Predy JSON comp_28 item_402: 橙色圆角胶囊 (rgb: 1.0, 0.392, 0.176)
+      ctx.fillStyle = 'rgb(255, 100, 45)';
+      ctx.beginPath();
+      ctx.roundRect(16, 16, 480, 128, 64);
+      ctx.fill();
+
+      // 对应 Predy JSON item_417: 文字渲染
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 44px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, c.width / 2, c.height / 2);
+      return c;
+    }
+
+    const canvas = document.getElementById('gl-canvas');
+    const gl = canvas.getContext('webgl2');
+
+    const vs = `
+      attribute vec2 a_pos;
+      attribute vec2 a_uv;
+      varying vec2 v_uv;
+
+      void main() {
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+        // 翻转 Y 轴，使 Canvas 2D 的左上角对齐 WebGL 矩形的左上角
+        v_uv = vec2(a_uv.x, 1.0 - a_uv.y);
+      }
+    `;
+
+    const fs = `
+      precision mediump float;
+      varying vec2 v_uv;
+      uniform sampler2D u_tex;
+      uniform float u_time;
+
+      void main() {
+        // 给 UV 加上一点随时间流动的正弦波偏移
+        float wave = sin(v_uv.x * 6.0 - u_time * 3.0) * 0.03;
+        vec2 uv = vec2(v_uv.x, clamp(v_uv.y + wave, 0.0, 1.0));
+        gl_FragColor = texture2D(u_tex, uv);
+      }
+    `;
+
+    const program = createProgram(gl, vs, fs);
+    gl.useProgram(program);
+
+    // 矩形的 6 个顶点坐标与对应的 6 个 UV 贴图坐标
+    setAttribute(gl, program, 'a_pos', [
+      -0.7,  0.3,   -0.7, -0.3,    0.7,  0.3,
+      -0.7, -0.3,    0.7, -0.3,    0.7,  0.3,
+    ], 2);
+
+    setAttribute(gl, program, 'a_uv', [
+       0.0,  1.0,    0.0,  0.0,    1.0,  1.0,
+       0.0,  0.0,    1.0,  0.0,    1.0,  1.0,
+    ], 2);
+
+    // 把离屏 Canvas 2D 上传为 WebGL 纹理
+    const capsuleCanvas = createPredyCapsuleCanvas('让灵感，动起来。');
+    createTextureFromSource(gl, capsuleCanvas, true);
+
+    // 开启预乘 Alpha 混合（让胶囊圆角外的透明区域能透出米白色背景！）
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+    const uTimeLoc = gl.getUniformLocation(program, 'u_time');
+
+    function render(now) {
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      // 背景色设为 Predy JSON item_420 的米白色 [0.965, 0.953, 0.925, 1]
+      gl.clearColor(0.965, 0.953, 0.925, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      gl.uniform1f(uTimeLoc, now * 0.001);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
